@@ -1,7 +1,7 @@
 use crate::error::MinusOneResult;
-use crate::ps::{Powershell};
-use crate::ps::Powershell::{Array, Raw};
 use crate::ps::tool::StringTool;
+use crate::ps::Powershell;
+use crate::ps::Powershell::{Array, Raw};
 use crate::ps::Value::{Bool, Num, Str};
 use crate::rule::RuleMut;
 use crate::tree::{ControlFlow, NodeMut};
@@ -28,18 +28,31 @@ impl<'a> RuleMut<'a> for ParseString {
         let view = node.view();
 
         match view.kind() {
-            "verbatim_string_characters" => {
+            "verbatim_string_characters" | "verbatim_here_string_characters" => {
+                let trim_size = match view.kind() {
+                    "verbatim_string_characters" => 1,
+                    "verbatim_here_string_characters" => 3,
+                    _ => 0, // not possible
+                };
                 let value = String::from(view.text()?);
                 // Parse string by removing the double quote
-                node.set(Raw(Str(
-                    String::from(&value[1..value.len() - 1]).replace("''", "'")
-                )));
+                node.set(Raw(Str(String::from(
+                    &value[trim_size..value.len() - trim_size],
+                )
+                .replace("''", "'"))));
             }
-            "expandable_string_literal" => {
+            "expandable_string_literal" | "expandable_here_string_literal" => {
                 // expand what is expandable
                 let value = String::from(view.text()?);
+
                 // Parse string by removing the double quote
-                let mut result = String::from(&value[1..value.len() - 1]).replace("\"\"", "\"");
+                let trim_size = match view.kind() {
+                    "expandable_string_literal" => 1,
+                    "expandable_here_string_literal" => 3, // remove @ and \n as well
+                    _ => 0,                                // not possible
+                };
+                let mut result =
+                    String::from(&value[trim_size..value.len() - trim_size]).replace("\"\"", "\"");
 
                 for child in view.iter() {
                     // relicate token from tree-sitter
@@ -123,7 +136,9 @@ impl<'a> RuleMut<'a> for ConcatString {
             if let (Some(left_op), Some(operator), Some(right_op)) =
                 (view.child(0), view.child(1), view.child(2))
             {
-                if let (Some(Raw(Str(string_left))), "+", Some(Raw(Str(string_right)))) = (left_op.data(), operator.text()?, right_op.data()) {
+                if let (Some(Raw(Str(string_left))), "+", Some(Raw(Str(string_right)))) =
+                    (left_op.data(), operator.text()?, right_op.data())
+                {
                     node.reduce(Raw(Str(String::from(string_left) + string_right)))
                 }
             }
@@ -160,25 +175,27 @@ impl<'a> RuleMut<'a> for StringReplaceMethod {
                     expression.data(),
                     operator.text()?,
                     &member_name.text()?.to_string(),
-                    member_name.data()
+                    member_name.data(),
                 ) {
-                    (Some(Raw(Str(src))), ".", m, _) | (Some(Raw(Str(src))), ".", _, Some(Raw(Str(m))))
-                        if m.clone().to_lowercase().remove_tilt().remove_quote() == "replace" => {
-                            if let Some(argument_expression_list) =
-                                arguments_list.named_child("argument_expression_list")
-                            {
-                                if let (Some(arg_1), Some(arg_2)) = (
-                                    argument_expression_list.child(0),
-                                    argument_expression_list.child(2),
-                                ) {
-                                    if let (Some(Raw(Str(from))), Some(Raw(to))) =
-                                        (arg_1.data(), arg_2.data())
-                                    {
-                                        node.reduce(Raw(Str(src.replace(from, &to.to_string()))));
-                                    }
+                    (Some(Raw(Str(src))), ".", m, _)
+                    | (Some(Raw(Str(src))), ".", _, Some(Raw(Str(m))))
+                        if m.clone().to_lowercase().remove_tilt().remove_quote() == "replace" =>
+                    {
+                        if let Some(argument_expression_list) =
+                            arguments_list.named_child("argument_expression_list")
+                        {
+                            if let (Some(arg_1), Some(arg_2)) = (
+                                argument_expression_list.child(0),
+                                argument_expression_list.child(2),
+                            ) {
+                                if let (Some(Raw(Str(from))), Some(Raw(to))) =
+                                    (arg_1.data(), arg_2.data())
+                                {
+                                    node.reduce(Raw(Str(src.replace(from, &to.to_string()))));
                                 }
                             }
                         }
+                    }
                     _ => {}
                 }
             }
@@ -282,10 +299,8 @@ impl<'a> RuleMut<'a> for FormatString {
                     (Some(Raw(Str(format_str))), Some(Array(format_args))) => {
                         let mut result = format_str.clone();
                         for (index, new) in format_args.iter().enumerate() {
-                            result = result.replace(
-                                format!("{{{index}}}").as_str(),
-                                new.to_string().as_str(),
-                            );
+                            result = result
+                                .replace(format!("{{{index}}}").as_str(), new.to_string().as_str());
                         }
                         node.reduce(Raw(Str(result)));
                     }
@@ -330,29 +345,30 @@ impl<'a> RuleMut<'a> for StringSplitMethod {
                     expression.data(),
                     operator.text()?,
                     &member_name.text()?.to_string(),
-                    member_name.data()
+                    member_name.data(),
                 ) {
-
-                    (Some(Raw(Str(src))), ".", m, _) | (Some(Raw(Str(src))), ".", _, Some(Raw(Str(m))))
-                        if m.clone().to_lowercase().remove_tilt().remove_quote() == "split" => {
-                            if let Some(argument_expression_list) =
-                                arguments_list.named_child("argument_expression_list")
-                            {
-                                if let Some(arg_1) = argument_expression_list.child(0) {
-                                    if let Some(Raw(Str(separator))) = arg_1.data() {
-                                        // not reduce to have a better deobfuscation
-                                        // if we reduce this step we will maybe lost the string
-                                        node.set(Array(
-                                            src.split(separator)
-                                                .collect::<Vec<&str>>()
-                                                .iter()
-                                                .map(|e| Str(e.to_string()))
-                                                .collect(),
-                                        ));
-                                    }
+                    (Some(Raw(Str(src))), ".", m, _)
+                    | (Some(Raw(Str(src))), ".", _, Some(Raw(Str(m))))
+                        if m.clone().to_lowercase().remove_tilt().remove_quote() == "split" =>
+                    {
+                        if let Some(argument_expression_list) =
+                            arguments_list.named_child("argument_expression_list")
+                        {
+                            if let Some(arg_1) = argument_expression_list.child(0) {
+                                if let Some(Raw(Str(separator))) = arg_1.data() {
+                                    // not reduce to have a better deobfuscation
+                                    // if we reduce this step we will maybe lost the string
+                                    node.set(Array(
+                                        src.split(separator)
+                                            .collect::<Vec<&str>>()
+                                            .iter()
+                                            .map(|e| Str(e.to_string()))
+                                            .collect(),
+                                    ));
                                 }
                             }
                         }
+                    }
                     _ => {}
                 }
             }
