@@ -18,7 +18,7 @@ use crate::ps::typing::ParseType;
 use crate::ps::var::{StaticVar, Var};
 use crate::tree::{HashMapStorage, Storage, Tree};
 use tree_sitter_powershell::LANGUAGE as powershell_language;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 pub mod access;
 pub mod array;
@@ -82,6 +82,13 @@ impl Value {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PSObject {
+    type_name: String,
+    properties: HashMap<String, Powershell>,
+}
+
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Powershell {
     Raw(Value),
@@ -91,6 +98,7 @@ pub enum Powershell {
     HashMap(BTreeMap<Value, Value>),
     HashEntry(Value, Value),
     Type(String), // Will infer type
+    Object(PSObject),
     Unknown,
 }
 
