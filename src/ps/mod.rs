@@ -3,6 +3,7 @@ use crate::ps::access::{AccessArray, AccessHashMap, AccessString};
 use crate::ps::array::{AddArray, ComputeArrayExpr, NewObjectArray, ParseArrayLiteral, ParseRange};
 use crate::ps::bool::{BoolAlgebra, Comparison, Not, ParseBool};
 use crate::ps::cast::{Cast, CastNull};
+use crate::ps::crypto::CryptoObjectUse;
 use crate::ps::foreach::{ForEach, PSItemInferrator};
 use crate::ps::forward::Forward;
 use crate::ps::hash::ParseHash;
@@ -24,6 +25,7 @@ pub mod access;
 pub mod array;
 pub mod bool;
 pub mod cast;
+pub mod crypto;
 pub mod foreach;
 pub mod forward;
 pub mod hash;
@@ -88,6 +90,15 @@ pub struct PSObject {
     properties: HashMap<String, Powershell>,
 }
 
+impl PSObject {
+    pub fn new(type_name: &str) -> Self {
+        PSObject {
+            type_name: type_name.to_string(),
+            properties: HashMap::default(),
+        }
+    }
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Powershell {
@@ -142,6 +153,7 @@ pub type RuleSet = (
     StringSplitMethod, // Handle split method
     AccessArray,  // Handle static array element access
     AccessHashMap, // Handle hashmap access
+    CryptoObjectUse,
 );
 
 pub fn remove_powershell_extra(source: &str) -> MinusOneResult<String> {
